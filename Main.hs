@@ -1,18 +1,21 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 import Data.Set
+import Control.Concurrent
 import Control.Concurrent.STM
 import Network.HTTP.Conduit      (simpleHttp)
 import Data.ByteString.Lazy.UTF8 (toString)
 import Data.List (intercalate)
 import Text.XML.HXT.Core
 import Text.HandsomeSoup
-import Control.Monad
+import Control.Monad as M
 
 url = "http://vpustotu.ru/moderation/"
 
 main = do
   stateRef <- atomically $ newTVar emptyState
-  _ <- job conf stateRef
+  dumpChan <- atomically $ newTChan
+  _ <- forkIO $ dumper dumpChan
+  _ <- job dumpChan conf stateRef
   state <- atomically $ readTVar stateRef
   mapM_ putStrLn $ (elems . cache) state
   print $ duplicates state
@@ -30,20 +33,34 @@ conf = Conf 1 50
 
 data State = State { cache      :: Cache Quote
                    , duplicates :: !Int
-                   , counter    :: !Int
+                   , counter  :: !Int
                    } deriving Show
 emptyState = State empty 0 0
 type StateRef = TVar State
--- TODO We're overusing state word
-data GrabberState = Continue | Quit
 
-job :: Conf -> StateRef -> IO ()
-job conf stateRef = do
+type Dump = TChan State
+-- TODO We're overusing state word
+data GrabberState = Continue | Quit deriving Eq
+
+dumper :: Dump -> IO ()
+dumper chan = do
+  state <- atomically $ readTChan chan
+  putStrLn $ "Loaded: " ++ (show $ counter state) ++ " records, " ++
+    (show . size . cache) state ++ " of them are unique"
+  dumper chan
+
+job :: Dump -> Conf -> StateRef -> IO ()
+job dump conf stateRef = do
   q <- loadQuote
-  next <- atomically $ addQuote conf stateRef q
-  case next of
+  r <- atomically $ do
+    next <- addQuote conf stateRef q
+    M.when (next == Continue) $ do
+      s <- readTVar stateRef
+      writeTChan dump s
+    return next
+  case r of
     Quit     -> return ()
-    Continue -> job conf stateRef
+    Continue -> job dump conf stateRef
 
 loadQuote :: IO Quote
 loadQuote = do

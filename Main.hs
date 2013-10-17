@@ -2,6 +2,7 @@
 import Data.Set
 import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Exception
 import Network.HTTP.Conduit      (simpleHttp)
 import Data.ByteString.Lazy.UTF8 (toString)
 import Data.List (intercalate)
@@ -10,12 +11,18 @@ import Text.HandsomeSoup
 import Control.Monad as M
 
 url = "http://vpustotu.ru/moderation/"
-
+-- TODO full rewrite with channels
 main = do
   stateRef <- atomically $ newTVar emptyState
   dumpChan <- atomically $ newTChan
   _ <- forkIO $ dumper dumpChan
-  _ <- job dumpChan conf stateRef
+  -- TODO Replace with TVar
+
+  vars <- forM [1..(threads conf)] $ \_ -> do
+        x <- newEmptyMVar
+        forkIO $ job dumpChan conf stateRef `finally` (putMVar x ())
+        return x
+  forM_ vars readMVar
   state <- atomically $ readTVar stateRef
   mapM_ putStrLn $ (elems . cache) state
   print $ duplicates state
@@ -29,7 +36,7 @@ type Cache a = Set a
 data Conf = Conf { threads  :: !Int
                  , maxDupes :: !Int
                  }
-conf = Conf 1 50
+conf = Conf 5 50
 
 data State = State { cache      :: Cache Quote
                    , duplicates :: !Int
@@ -41,6 +48,7 @@ type StateRef = TVar State
 type Dump = TChan State
 -- TODO We're overusing state word
 data GrabberState = Continue | Quit deriving Eq
+
 
 dumper :: Dump -> IO ()
 dumper chan = do

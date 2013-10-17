@@ -9,29 +9,59 @@ import Data.List (intercalate)
 import Text.XML.HXT.Core
 import Text.HandsomeSoup
 import Control.Monad as M
+import Control.Applicative hiding (empty)
+import Control.Monad.Reader
 
 url = "http://vpustotu.ru/moderation/"
 -- TODO full rewrite with channels
-main = do
-  stateRef <- atomically $ newTVar emptyState
-  dumpChan <- atomically $ newTChan
-  _ <- forkIO $ dumper dumpChan
-  -- TODO Replace with TVar
-
-  vars <- forM [1..(threads conf)] $ \_ -> do
-        x <- newEmptyMVar
-        forkIO $ job dumpChan conf stateRef `finally` (putMVar x ())
-        return x
-  forM_ vars readMVar
-  state <- atomically $ readTVar stateRef
-  mapM_ putStrLn $ (elems . cache) state
-  print $ duplicates state
-  print $ counter state
-  print $ (size . cache) state
+main = launchAndWait 10 $ do
+  putStrLn "I am thread"
+  threadDelay $ 1000 * 1000
+  putStrLn "My job is done"
 
 
 type Quote = String
 type Cache a = Set a
+
+data Runtime = Runtime { dump  :: TChan State
+                       , quit  :: TChan ()
+                       , state :: TVar State
+                       }
+initRuntime :: STM Runtime
+initRuntime =
+  Runtime <$> newTChan <*> newTChan <*> newTVar emptyState
+
+start :: Conf -> IO Runtime
+start conf = do
+  runtime <- atomically initRuntime
+  (forkIO . dumpThread . dump) runtime
+  launchAndWait (threads conf) $ downloader runtime
+  return runtime
+
+dumpThread :: TChan State -> IO ()
+dumpThread = undefined
+
+downloader :: Runtime -> IO ()
+downloader = undefined
+
+waitFor :: (a -> Bool) -> TVar a -> STM ()
+waitFor cond var =
+  readTVar var >>= \x -> if cond x then return () else retry
+
+updateTVar :: (a -> a) -> TVar a -> STM a
+updateTVar action var = do
+  x <- readTVar var
+  writeTVar var $ action x
+  return x
+
+launchAndWait :: Int -> IO () -> IO ()
+launchAndWait amount action = do
+  syncVar <- atomically $ newTVar 0
+  let
+    notifier = atomically $ updateTVar (+1) syncVar
+    worker = forkIO $ action `finally` notifier
+  forM_ [1..amount] $ \_ -> worker
+  atomically $ waitFor (amount==) syncVar
 
 data Conf = Conf { threads  :: !Int
                  , maxDupes :: !Int

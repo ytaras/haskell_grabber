@@ -8,6 +8,7 @@ import Control.Monad
 import Control.Monad.Reader
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
+
 defaultUrl = "http://vpustotu.ru/moderation/"
 
 type Quote = String
@@ -46,9 +47,29 @@ startWorkers job = do
   atomicallyR $ waitForZero counter
   where
     run c = lift $ forkIO $ job `finally` (atomReplace c (\x -> x - 1))
-    atomReplace c = atomically . modifyTVar c
+    atomReplace c = atomically . modifyTVar' c
     waitForZero c = readTVar c >>= \x ->
       if x == 0 then return () else retry
 
-startWorkersC :: IO () -> ReaderT Config IO ()
-startWorkersC = (withReaderT threads) . startWorkers
+increment = flip modifyTVar' (+1)
+add q = flip modifyTVar' (S.insert q)
+isDuplicate q v = readTVar v >>= \s -> return $ S.member q s
+checkConditions :: Config -> Runtime -> STM ()
+checkConditions c r = do
+  dups <- readTVar $ duplicates r
+  writeTVar (state r) $
+    if dups >= (maxDuplicates c)
+    then Stopping
+    else Running
+
+addQuote :: Config -> Runtime -> Quote -> STM ()
+addQuote c r q = do
+  d <- isDuplicate q $ quotes r
+  if d
+    then increment $ duplicates r
+    else do
+    add q $ quotes r
+    reset $ duplicates r
+  checkConditions c r
+    where
+      reset x = writeTVar x 0

@@ -5,6 +5,7 @@ import Control.Exception (finally)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
+import Control.Monad.Reader
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
 defaultUrl = "http://vpustotu.ru/moderation/"
@@ -35,13 +36,17 @@ main = print =<< cmdArgs config
 
 prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
 
-startWorkers :: Int -> IO () -> IO ()
-startWorkers count job = do
-  counter <- atomically $ newTVar 0
+atomicallyR = lift . atomically
+
+startWorkers :: IO () -> ReaderT Config IO ()
+startWorkers job = do
+  config <- ask
+  let count = threads config
+  counter <- atomicallyR $ newTVar count
   replicateM_ count $ run counter
-  atomically $ waitForZero counter
+  atomicallyR $ waitForZero counter
   where
-    run c = forkIO $ job `finally` (atomReplace c (+1))
+    run c = lift $ forkIO $ job `finally` (atomReplace c (\x -> x - 1))
     atomReplace c = atomically . modifyTVar c
     waitForZero c = readTVar c >>= \x ->
       if x == 0 then return () else retry

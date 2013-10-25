@@ -38,10 +38,9 @@ prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
 
 atomicallyR = lift . atomically
 
-startWorkers :: IO () -> ReaderT Config IO ()
+startWorkers :: IO () -> ReaderT Int IO ()
 startWorkers job = do
-  config <- ask
-  let count = threads config
+  count <- ask
   counter <- atomicallyR $ newTVar count
   replicateM_ count $ run counter
   atomicallyR $ waitForZero counter
@@ -50,3 +49,6 @@ startWorkers job = do
     atomReplace c = atomically . modifyTVar c
     waitForZero c = readTVar c >>= \x ->
       if x == 0 then return () else retry
+
+startWorkersC :: IO () -> ReaderT Config IO ()
+startWorkersC = (withReaderT threads) . startWorkers

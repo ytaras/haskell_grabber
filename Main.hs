@@ -1,12 +1,15 @@
 {-# LANGUAGE NoMonomorphismRestriction, DeriveDataTypeable #-}
 
 import Control.Applicative
+import Control.Arrow
 import Control.Exception (finally)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
+import Text.HandsomeSoup
+import Text.XML.HXT.Core
 
 defaultUrl = "http://vpustotu.ru/moderation/"
 
@@ -67,3 +70,10 @@ addQuote c r q = do
   checkConditions c r
     where
       reset x = writeTVar x 0
+
+getDoc = fromUrl . url
+parseQuote doc = runX $
+                 doc >>> css "[class=fi_text]" >>> (deep getText)
+
+loadQuote :: Config -> IO [Quote]
+loadQuote c = getDoc c >>= parseQuote

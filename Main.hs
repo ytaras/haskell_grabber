@@ -41,7 +41,10 @@ main = do
   c <- cmdArgs config
   r <- atomically $ prepareRuntime
   startWorkers (threads config) $ whileRunning r $ job c r
-  qs <- atomically $ readTVar $ quotes r
+  runtimeValue duplicates r >>= print
+
+runtimeValue :: (Runtime -> TVar a) -> Runtime -> IO a
+runtimeValue f = atomically . readTVar . f
 
 prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
 
@@ -57,8 +60,9 @@ startWorkers count job = do
       if x == 0 then return () else retry
 
 whileRunning :: Runtime -> IO () -> IO ()
-whileRunning r j = j >> do
-  s <- atomically $ readTVar $ state r
+whileRunning r j =
+  j >>
+  runtimeValue state r >>= \s ->
   if s == Running then whileRunning r j else return ()
 
 increment = flip modifyTVar' (+1)
@@ -91,4 +95,5 @@ loadQuote c = map fromString <$> (getDoc c >>= parseQuote)
 
 job c r = do
   q <- loadQuote c
-  atomically $ mapM_ (addQuote c r) q
+  atomically $ addQuotes c r q
+  where addQuotes c r = mapM_ $ addQuote c r

@@ -6,6 +6,8 @@ import Control.Exception (finally)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
+import Data.String (fromString)
+import qualified Data.ByteString as B
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
 import Text.HandsomeSoup
@@ -13,7 +15,7 @@ import Text.XML.HXT.Core
 
 defaultUrl = "http://vpustotu.ru/moderation/"
 
-type Quote = String
+type Quote = B.ByteString
 data Config = Config { url           :: String
                      , threads       :: Int
                      , maxDuplicates :: Int
@@ -40,8 +42,6 @@ main = do
   r <- atomically $ prepareRuntime
   startWorkers (threads config) $ whileRunning r $ job c r
   qs <- atomically $ readTVar $ quotes r
-  print qs
-
 
 prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
 
@@ -87,7 +87,7 @@ parseQuote doc = runX $
                  doc >>> css "[class=fi_text]" >>> (deep getText)
 
 loadQuote :: Config -> IO [Quote]
-loadQuote c = getDoc c >>= parseQuote
+loadQuote c = map fromString <$> (getDoc c >>= parseQuote)
 
 job c r = do
   q <- loadQuote c

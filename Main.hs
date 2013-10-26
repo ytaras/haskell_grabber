@@ -20,7 +20,7 @@ data Config = Config { url           :: String
                      , dumpPeriod    :: Int
                      } deriving (Show, Data, Typeable)
 
-data ProgramState = Running | Stopping
+data ProgramState = Running | Stopping deriving Eq
 
 data Runtime = Runtime { quotes     :: TVar (S.Set Quote)
                        , duplicates :: TVar (Int)
@@ -35,7 +35,13 @@ config = Config { url = defaultUrl &= help "URL to grab from"
                                &= help "Show progress every N seconds"
                 } &= summary "Quotes Grabber"
 
-main = print =<< cmdArgs config
+main = do
+  c <- cmdArgs config
+  r <- atomically $ prepareRuntime
+  startWorkers (threads config) $ whileRunning r $ job c r
+  qs <- atomically $ readTVar $ quotes r
+  print qs
+
 
 prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
 
@@ -49,6 +55,11 @@ startWorkers count job = do
     atomReplace c = atomically . modifyTVar' c
     waitForZero c = readTVar c >>= \x ->
       if x == 0 then return () else retry
+
+whileRunning :: Runtime -> IO () -> IO ()
+whileRunning r j = j >> do
+  s <- atomically $ readTVar $ state r
+  if s == Running then whileRunning r j else return ()
 
 increment = flip modifyTVar' (+1)
 add q = flip modifyTVar' (S.insert q)
@@ -77,3 +88,7 @@ parseQuote doc = runX $
 
 loadQuote :: Config -> IO [Quote]
 loadQuote c = getDoc c >>= parseQuote
+
+job c r = do
+  q <- loadQuote c
+  atomically $ mapM_ (addQuote c r) q

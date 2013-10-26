@@ -5,7 +5,6 @@ import Control.Exception (finally)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
-import Control.Monad.Reader
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
 
@@ -37,16 +36,13 @@ main = print =<< cmdArgs config
 
 prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
 
-atomicallyR = lift . atomically
-
-startWorkers :: IO () -> ReaderT Int IO ()
-startWorkers job = do
-  count <- ask
-  counter <- atomicallyR $ newTVar count
+startWorkers :: Int -> IO () -> IO ()
+startWorkers count job = do
+  counter <- atomically $ newTVar count
   replicateM_ count $ run counter
-  atomicallyR $ waitForZero counter
+  atomically $ waitForZero counter
   where
-    run c = lift $ forkIO $ job `finally` (atomReplace c (\x -> x - 1))
+    run c = forkIO $ job `finally` (atomReplace c (\x -> x - 1))
     atomReplace c = atomically . modifyTVar' c
     waitForZero c = readTVar c >>= \x ->
       if x == 0 then return () else retry
@@ -57,19 +53,17 @@ isDuplicate q v = readTVar v >>= \s -> return $ S.member q s
 checkConditions :: Config -> Runtime -> STM ()
 checkConditions c r = do
   dups <- readTVar $ duplicates r
-  writeTVar (state r) $
-    if dups >= (maxDuplicates c)
-    then Stopping
-    else Running
+  if dups >= (maxDuplicates c)
+    then writeTVar (state r) Stopping
+    else return ()
 
 addQuote :: Config -> Runtime -> Quote -> STM ()
 addQuote c r q = do
   d <- isDuplicate q $ quotes r
   if d
     then increment $ duplicates r
-    else do
-    add q $ quotes r
-    reset $ duplicates r
+    else do add q $ quotes r
+            reset $ duplicates r
   checkConditions c r
     where
       reset x = writeTVar x 0

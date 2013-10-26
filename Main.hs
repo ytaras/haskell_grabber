@@ -10,6 +10,7 @@ import Data.String (fromString)
 import qualified Data.ByteString as B
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
+import System.IO
 import Text.HandsomeSoup
 import Text.XML.HXT.Core
 
@@ -20,6 +21,7 @@ data Config = Config { url           :: String
                      , threads       :: Int
                      , maxDuplicates :: Int
                      , dumpPeriod    :: Int
+                     , outFile       :: String
                      } deriving (Show, Data, Typeable)
 
 data ProgramState = Running | Stopping deriving Eq
@@ -35,13 +37,14 @@ config = Config { url = defaultUrl &= help "URL to grab from"
                                   &= help "Duplicates threshold to stop"
                 , dumpPeriod = 2 &= explicit &= name "showEvery" &= name "s"
                                &= help "Show progress every N seconds"
+                , outFile = "quotes.txt" &= typFile &= help "Output file"
                 } &= summary "Quotes Grabber"
 
 main = do
   c <- cmdArgs config
   r <- atomically $ prepareRuntime
   startWorkers (threads config) $ whileRunning r $ job c r
-  runtimeValue duplicates r >>= print
+  runtimeValue quotes r >>= dumpQuotes c
 
 runtimeValue :: (Runtime -> TVar a) -> Runtime -> IO a
 runtimeValue f = atomically . readTVar . f
@@ -97,3 +100,11 @@ job c r = do
   q <- loadQuote c
   atomically $ addQuotes c r q
   where addQuotes c r = mapM_ $ addQuote c r
+
+dumpQuotes :: Config -> S.Set Quote  -> IO ()
+dumpQuotes c q = do
+  h <- openFile (outFile c) WriteMode
+  forM_ (S.toList q) $ writeQuote h
+  hClose h
+  where
+    writeQuote h q = B.hPut h q >> hPutStr h "\n\n\n"

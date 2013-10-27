@@ -7,6 +7,7 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
 import Data.Maybe (catMaybes)
+import Data.Serialize
 import Data.String (fromString)
 import qualified Data.ByteString as B
 import Data.Hashable
@@ -24,7 +25,10 @@ data Config = Config { url           :: String
                      , maxDuplicates :: Int
                      , dumpPeriod    :: Int
                      , outFile       :: String
+                     , hashFile      :: String
                      } deriving (Show, Data, Typeable)
+
+
 
 data ProgramState = Running | Stopping deriving Eq
 
@@ -40,12 +44,14 @@ config = Config { url = defaultUrl &= help "URL to grab from"
                 , dumpPeriod = 2 &= explicit &= name "showEvery" &= name "s"
                                &= help "Show progress every N seconds"
                 , outFile = "quotes.txt" &= typFile &= help "Output file"
+                , hashFile = "hash.bin" &= typFile &= help "File to save program state between runs"
                 } &= summary "Quotes Grabber"
 
 main = do
   c <- cmdArgs config
   r <- atomically $ prepareRuntime
   startWorkers (threads config) $ whileRunning r $ job c r
+  saveState r c
 
 runtimeValue :: (Runtime -> TVar a) -> Runtime -> IO a
 runtimeValue f = atomically . readTVar . f
@@ -114,3 +120,11 @@ dumpQuotes c q = do
   hClose h
   where
     writeQuote h q = B.hPut h q >> hPutStr h "\n\n\n"
+
+saveState :: Runtime -> Config -> IO ()
+saveState r c = do
+  q <- runtimeValue hashes r
+  let v = encode q
+  h <- openFile (hashFile c) WriteMode
+  B.hPutStr h v
+  hClose h

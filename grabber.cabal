@@ -60,4 +60,5 @@ executable grabber
                        stm,
                        bytestring,
                        cmdargs,
-                       hashable
+                       hashable,
+                       cereal

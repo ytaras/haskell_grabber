@@ -6,8 +6,10 @@ import Control.Exception (finally)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
+import Data.Maybe (catMaybes)
 import Data.String (fromString)
 import qualified Data.ByteString as B
+import Data.Hashable
 import qualified Data.Set as S
 import System.Console.CmdArgs.Implicit
 import System.IO
@@ -26,7 +28,7 @@ data Config = Config { url           :: String
 
 data ProgramState = Running | Stopping deriving Eq
 
-data Runtime = Runtime { quotes     :: TVar (S.Set Quote)
+data Runtime = Runtime { hashes     :: TVar (S.Set Int)
                        , duplicates :: TVar (Int)
                        , state      :: TVar (ProgramState)
                        }
@@ -44,12 +46,12 @@ main = do
   c <- cmdArgs config
   r <- atomically $ prepareRuntime
   startWorkers (threads config) $ whileRunning r $ job c r
-  runtimeValue quotes r >>= dumpQuotes c
 
 runtimeValue :: (Runtime -> TVar a) -> Runtime -> IO a
 runtimeValue f = atomically . readTVar . f
 
-prepareRuntime = Runtime <$> newTVar S.empty <*> newTVar 0 <*> newTVar Running
+prepareRuntime = Runtime <$> newTVar S.empty
+                 <*> newTVar 0 <*> newTVar Running
 
 startWorkers :: Int -> IO () -> IO ()
 startWorkers count job = do
@@ -78,14 +80,17 @@ checkConditions c r = do
     then writeTVar (state r) Stopping
     else return ()
 
-addQuote :: Config -> Runtime -> Quote -> STM ()
+addQuote :: Config -> Runtime -> Quote -> STM (Maybe Quote) -- TODO Is
+            -- it better to return bool?
 addQuote c r q = do
-  d <- isDuplicate q $ quotes r
+  let h = hash q
+  d <- isDuplicate h $ hashes r
   if d
     then increment $ duplicates r
-    else do add q $ quotes r
+    else do add h $ hashes r
             reset $ duplicates r
   checkConditions c r
+  return $ if d then Nothing else Just q
     where
       reset x = writeTVar x 0
 
@@ -96,15 +101,16 @@ parseQuote doc = runX $
 loadQuote :: Config -> IO [Quote]
 loadQuote c = map fromString <$> (getDoc c >>= parseQuote)
 
-job c r = do
-  q <- loadQuote c
-  atomically $ addQuotes c r q
-  where addQuotes c r = mapM_ $ addQuote c r
+job c r = loadQuote c >>= addQuotes >>= dumpQuotes c
+  where
+    addQuotes q = atomically $ fmap catMaybes $ mapM (addQuote c r) q
 
-dumpQuotes :: Config -> S.Set Quote  -> IO ()
+
+dumpQuotes :: Config -> [Quote]  -> IO ()
 dumpQuotes c q = do
-  h <- openFile (outFile c) WriteMode
-  forM_ (S.toList q) $ writeQuote h
+  -- TODO open and close file extract out
+  h <- openFile (outFile c) AppendMode
+  forM_ q $ writeQuote h
   hClose h
   where
     writeQuote h q = B.hPut h q >> hPutStr h "\n\n\n"

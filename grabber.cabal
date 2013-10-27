@@ -59,4 +59,5 @@ executable grabber
                        mtl,
                        stm,
                        bytestring,
-                       cmdargs
+                       cmdargs,
+                       hashable
